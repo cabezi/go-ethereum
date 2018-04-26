@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
@@ -333,12 +334,17 @@ func (api *PublicDebugAPI) DumpBlock(blockNr rpc.BlockNumber) (state.Dump, error
 type PrivateDebugAPI struct {
 	config *params.ChainConfig
 	eth    *Ethereum
+	txpAPI *ethapi.PublicTransactionPoolAPI
 }
 
 // NewPrivateDebugAPI creates a new API definition for the full node-related
 // private debug methods of the Ethereum service.
 func NewPrivateDebugAPI(config *params.ChainConfig, eth *Ethereum) *PrivateDebugAPI {
 	return &PrivateDebugAPI{config: config, eth: eth}
+}
+
+func (api *PrivateDebugAPI) Add(txpAPI *ethapi.PublicTransactionPoolAPI) {
+	api.txpAPI = txpAPI
 }
 
 // Preimage is a debug API function that returns the preimage for a sha3 hash, if known.

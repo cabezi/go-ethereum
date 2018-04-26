@@ -244,8 +244,9 @@ func CreateConsensusEngine(ctx *node.ServiceContext, config *ethash.Config, chai
 // APIs returns the collection of RPC services the ethereum package offers.
 // NOTE, some of these services probably need to be moved to somewhere else.
 func (s *Ethereum) APIs() []rpc.API {
-	apis := ethapi.GetAPIs(s.ApiBackend)
-
+	privateDebugAPI := NewPrivateDebugAPI(s.chainConfig, s)
+	apis := ethapi.GetAPIs(s.ApiBackend, privateDebugAPI)
+	privateDebugAPI.Add(apis[2].Service.(*ethapi.PublicTransactionPoolAPI))
 	// Append any APIs exposed explicitly by the consensus engine
 	apis = append(apis, s.engine.APIs(s.BlockChain())...)
 
@@ -288,7 +289,7 @@ func (s *Ethereum) APIs() []rpc.API {
 		}, {
 			Namespace: "debug",
 			Version:   "1.0",
-			Service:   NewPrivateDebugAPI(s.chainConfig, s),
+			Service:   privateDebugAPI,
 		}, {
 			Namespace: "net",
 			Version:   "1.0",

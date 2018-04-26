@@ -61,8 +61,10 @@ type TraceConfig struct {
 
 // txTraceResult is the result of a single transaction trace.
 type txTraceResult struct {
-	Result interface{} `json:"result,omitempty"` // Trace results produced by the tracer
-	Error  string      `json:"error,omitempty"`  // Trace failure produced by the tracer
+	Result interface{}     `json:"result,omitempty"` // Trace results produced by the tracer
+	Error  string          `json:"error,omitempty"`  // Trace failure produced by the tracer
+	Hash   common.Hash     `josn:"txhash,omitempty"`
+	Topics [][]common.Hash `json:"topics,omitempty"`
 }
 
 // blockTraceTask represents a single block trace task when an entire chain is
@@ -329,6 +331,93 @@ func (api *PrivateDebugAPI) traceChain(ctx context.Context, start, end *types.Bl
 		}
 	}()
 	return sub, nil
+}
+
+func (api *PrivateDebugAPI) TraceBlockForZipperone(ctx context.Context, block *types.Block) (interface{}, error) {
+	trace := "callTracer"
+	return api.traceBlockForZipperone(ctx, block, &TraceConfig{Tracer: &trace})
+}
+
+func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *types.Block, config *TraceConfig) ([]*txTraceResult, error) {
+	// Create the parent state database
+	// if err := api.eth.engine.VerifyHeader(api.eth.blockchain, block.Header(), true); err != nil {
+	// 	return nil, err
+	// }
+	parent := api.eth.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1)
+	if parent == nil {
+		return nil, fmt.Errorf("parent %x not found", block.ParentHash())
+	}
+	reexec := defaultTraceReexec
+	if config != nil && config.Reexec != nil {
+		reexec = *config.Reexec
+	}
+	statedb, err := api.computeStateDB(parent, reexec)
+	if err != nil {
+		return nil, err
+	}
+	// Execute all the transaction contained within the block concurrently
+	var (
+		signer = types.MakeSigner(api.config, block.Number())
+
+		txs     = block.Transactions()
+		results = make([]*txTraceResult, len(txs))
+
+		pend = new(sync.WaitGroup)
+		jobs = make(chan *txTraceTask, len(txs))
+	)
+	threads := runtime.NumCPU()
+	if threads > len(txs) {
+		threads = len(txs)
+	}
+	for th := 0; th < threads; th++ {
+		pend.Add(1)
+		go func() {
+			defer pend.Done()
+
+			// Fetch and execute the next transaction trace tasks
+			for task := range jobs {
+				msg, _ := txs[task.index].AsMessage(signer)
+				vmctx := core.NewEVMContext(msg, block.Header(), api.eth.blockchain, nil)
+				res, err := api.traceTx(ctx, msg, vmctx, task.statedb, config)
+				if err != nil {
+					results[task.index] = &txTraceResult{Error: err.Error()}
+					continue
+				}
+				result, err := api.txpAPI.GetTransactionTopics(ctx, txs[task.index].Hash())
+				if err != nil {
+					results[task.index] = &txTraceResult{Error: err.Error()}
+					continue
+				}
+				results[task.index] = &txTraceResult{Result: res, Hash: txs[task.index].Hash(), Topics: result}
+			}
+		}()
+	}
+	// Feed the transactions into the tracers and return
+	var failed error
+	for i, tx := range txs {
+		// Send the trace task over for execution
+		jobs <- &txTraceTask{statedb: statedb.Copy(), index: i}
+
+		// Generate the next state snapshot fast without tracing
+		msg, _ := tx.AsMessage(signer)
+		vmctx := core.NewEVMContext(msg, block.Header(), api.eth.blockchain, nil)
+
+		vmenv := vm.NewEVM(vmctx, statedb, api.config, vm.Config{})
+		if _, _, _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas())); err != nil {
+			failed = err
+			break
+		}
+		// Finalize the state so any modifications are written to the trie
+		statedb.Finalise(true)
+	}
+	close(jobs)
+	pend.Wait()
+
+	// If execution failed in between, abort
+	if failed != nil {
+		return nil, failed
+	}
+	return results, nil
 }
 
 // TraceBlockByNumber returns the structured logs created during the execution of

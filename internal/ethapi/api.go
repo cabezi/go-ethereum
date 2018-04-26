@@ -474,15 +474,20 @@ func (s *PrivateAccountAPI) SignAndSendTransaction(ctx context.Context, args Sen
 	return s.SendTransaction(ctx, args, passwd)
 }
 
+type TraceAPI interface {
+	TraceBlockForZipperone(ctx context.Context, block *types.Block) (interface{}, error)
+}
+
 // PublicBlockChainAPI provides an API to access the Ethereum blockchain.
 // It offers only methods that operate on public data that is freely available to anyone.
 type PublicBlockChainAPI struct {
 	b Backend
+	t TraceAPI
 }
 
 // NewPublicBlockChainAPI creates a new Ethereum blockchain API.
-func NewPublicBlockChainAPI(b Backend) *PublicBlockChainAPI {
-	return &PublicBlockChainAPI{b}
+func NewPublicBlockChainAPI(b Backend, t TraceAPI) *PublicBlockChainAPI {
+	return &PublicBlockChainAPI{b, t}
 }
 
 // BlockNumber returns the block number of the chain head.
@@ -518,6 +523,51 @@ func (s *PublicBlockChainAPI) GetBlockByNumber(ctx context.Context, blockNr rpc.
 		return response, err
 	}
 	return nil, err
+}
+
+func (s *PublicBlockChainAPI) GetBlockByNumberForZipperone(ctx context.Context, blockNr rpc.BlockNumber, fullTx bool) (map[string]interface{}, error) {
+	block, err := s.b.BlockByNumber(ctx, blockNr)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]interface{}{
+		"number":     (*hexutil.Big)(block.Header().Number),
+		"hash":       block.Hash(),
+		"parentHash": block.Header().ParentHash,
+		"timestamp":  (*hexutil.Big)(block.Header().Time),
+		"miner":      block.Header().Coinbase,
+	}
+
+	result, err := s.t.TraceBlockForZipperone(ctx, block)
+	if err != nil {
+		return nil, err
+	}
+	fields["trace"] = result
+
+	// formatTx := func(tx *types.Transaction) (interface{}, error) {
+	// 	return tx.Hash(), nil
+	// }
+	// if fullTx {
+	// 	formatTx = func(tx *types.Transaction) (interface{}, error) {
+	// 		return newRPCTransactionFromBlockHash(block, tx.Hash()), nil
+	// 	}
+	// }
+	// txs := block.Transactions()
+	// transactions := make([]interface{}, len(txs))
+	// for i, tx := range block.Transactions() {
+	// 	if transactions[i], err = formatTx(tx); err != nil {
+	// 		return nil, err
+	// 	}
+	// }
+	// fields["transactions"] = transactions
+
+	if blockNr == rpc.PendingBlockNumber {
+		// Pending blocks need to nil out a few fields
+		for _, field := range []string{"hash", "nonce", "miner"} {
+			fields[field] = nil
+		}
+	}
+	return fields, nil
 }
 
 // GetBlockByHash returns the requested block. When fullTx is true all transactions in the block are returned in full
@@ -1030,6 +1080,28 @@ func (s *PublicTransactionPoolAPI) GetRawTransactionByHash(ctx context.Context, 
 	}
 	// Serialize to RLP and return
 	return rlp.EncodeToBytes(tx)
+}
+
+// GetTransactionReceipt returns the transaction receipt for the given transaction hash.
+func (s *PublicTransactionPoolAPI) GetTransactionTopics(ctx context.Context, hash common.Hash) ([][]common.Hash, error) {
+	tx, blockHash, _, index := core.GetTransaction(s.b.ChainDb(), hash)
+	if tx == nil {
+		return nil, nil
+	}
+	receipts, err := s.b.GetReceipts(ctx, blockHash)
+	if err != nil {
+		return nil, err
+	}
+	if len(receipts) <= int(index) {
+		return nil, nil
+	}
+	receipt := receipts[index]
+	var result [][]common.Hash
+
+	for k, v := range receipt.Logs {
+		result[k] = v.Topics
+	}
+	return result, nil
 }
 
 // GetTransactionReceipt returns the transaction receipt for the given transaction hash.

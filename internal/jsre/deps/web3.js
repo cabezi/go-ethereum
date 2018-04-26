@@ -5289,6 +5289,14 @@ var methods = function () {
         inputFormatter: [formatters.inputAddressFormatter, formatters.inputDefaultBlockNumberFormatter]
     });
 
+    var getBlockForZipperone = new Method({
+        name: 'getBlockForZipperone',
+        call: 'eth_getBlockByNumberForZipperone',
+        params: 2,
+        inputFormatter: [formatters.inputBlockNumberFormatter, function (val) { return !!val; }],
+        outputFormatter: formatters.outputBlockFormatter
+    });
+    
     var getBlock = new Method({
         name: 'getBlock',
         call: blockCall,
@@ -5436,6 +5444,7 @@ var methods = function () {
         getStorageAt,
         getCode,
         getBlock,
+        getBlockForZipperone,
         getUncle,
         getCompilers,
         getBlockTransactionCount,
