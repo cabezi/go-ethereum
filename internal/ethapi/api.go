@@ -1082,8 +1082,14 @@ func (s *PublicTransactionPoolAPI) GetRawTransactionByHash(ctx context.Context, 
 	return rlp.EncodeToBytes(tx)
 }
 
+type ZipperLogs struct {
+	Addr   common.Address `json:"address,omitempty"`
+	Topics []common.Hash  `json:"topics,omitempty"`
+	Data   string         `json:"data,omitempty"`
+}
+
 // GetTransactionReceipt returns the transaction receipt for the given transaction hash.
-func (s *PublicTransactionPoolAPI) GetTransactionTopics(ctx context.Context, hash common.Hash) ([][]common.Hash, error) {
+func (s *PublicTransactionPoolAPI) GetTransactionTopics(ctx context.Context, hash common.Hash) ([]*ZipperLogs, error) {
 	tx, blockHash, _, index := core.GetTransaction(s.b.ChainDb(), hash)
 	if tx == nil {
 		return nil, nil
@@ -1096,10 +1102,15 @@ func (s *PublicTransactionPoolAPI) GetTransactionTopics(ctx context.Context, has
 		return nil, nil
 	}
 	receipt := receipts[index]
-	var result [][]common.Hash
+
+	result := make([]*ZipperLogs, len(receipt.Logs))
 
 	for k, v := range receipt.Logs {
-		result[k] = v.Topics
+		result[k] = &ZipperLogs{
+			Addr:   v.Address,
+			Topics: v.Topics,
+			Data:   common.Bytes2Hex(v.Data),
+		}
 	}
 	return result, nil
 }

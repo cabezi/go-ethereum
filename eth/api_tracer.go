@@ -61,10 +61,10 @@ type TraceConfig struct {
 
 // txTraceResult is the result of a single transaction trace.
 type txTraceResult struct {
-	Result interface{}     `json:"result,omitempty"` // Trace results produced by the tracer
-	Error  string          `json:"error,omitempty"`  // Trace failure produced by the tracer
-	Hash   common.Hash     `josn:"txhash,omitempty"`
-	Topics [][]common.Hash `json:"topics,omitempty"`
+	Result interface{} `json:"result,omitempty"` // Trace results produced by the tracer
+	Error  string      `json:"error,omitempty"`  // Trace failure produced by the tracer
+	TxHash common.Hash `json:"txHash,omitempty"`
+	Logs   interface{} `json:"logs,omitempty"`
 }
 
 // blockTraceTask represents a single block trace task when an entire chain is
@@ -383,12 +383,17 @@ func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *t
 					results[task.index] = &txTraceResult{Error: err.Error()}
 					continue
 				}
-				result, err := api.txpAPI.GetTransactionTopics(ctx, txs[task.index].Hash())
+				zipLogs, err := api.txpAPI.GetTransactionTopics(ctx, txs[task.index].Hash())
 				if err != nil {
 					results[task.index] = &txTraceResult{Error: err.Error()}
 					continue
 				}
-				results[task.index] = &txTraceResult{Result: res, Hash: txs[task.index].Hash(), Topics: result}
+
+				if len(zipLogs) == 0 {
+					results[task.index] = &txTraceResult{Result: res, TxHash: txs[task.index].Hash()}
+				} else {
+					results[task.index] = &txTraceResult{Result: res, TxHash: txs[task.index].Hash(), Logs: zipLogs}
+				}
 			}
 		}()
 	}
