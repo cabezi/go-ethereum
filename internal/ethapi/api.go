@@ -475,7 +475,7 @@ func (s *PrivateAccountAPI) SignAndSendTransaction(ctx context.Context, args Sen
 }
 
 type TraceAPI interface {
-	TraceBlockForZipperone(ctx context.Context, block *types.Block) (interface{}, error)
+	TraceBlockForZipperone(ctx context.Context, block *types.Block, topics [][]common.Hash) (interface{}, error)
 }
 
 // PublicBlockChainAPI provides an API to access the Ethereum blockchain.
@@ -525,11 +525,12 @@ func (s *PublicBlockChainAPI) GetBlockByNumber(ctx context.Context, blockNr rpc.
 	return nil, err
 }
 
-func (s *PublicBlockChainAPI) GetBlockByNumberForZipperone(ctx context.Context, blockNr rpc.BlockNumber, fullTx bool) (map[string]interface{}, error) {
+func (s *PublicBlockChainAPI) GetBlockByNumberForZipperone(ctx context.Context, blockNr rpc.BlockNumber, topics [][]common.Hash) (map[string]interface{}, error) {
 	block, err := s.b.BlockByNumber(ctx, blockNr)
 	if err != nil {
 		return nil, err
 	}
+
 	fields := map[string]interface{}{
 		"number":     (*hexutil.Big)(block.Header().Number),
 		"hash":       block.Hash(),
@@ -538,28 +539,11 @@ func (s *PublicBlockChainAPI) GetBlockByNumberForZipperone(ctx context.Context, 
 		"miner":      block.Header().Coinbase,
 	}
 
-	result, err := s.t.TraceBlockForZipperone(ctx, block)
+	result, err := s.t.TraceBlockForZipperone(ctx, block, topics)
 	if err != nil {
 		return nil, err
 	}
-	fields["trace"] = result
-
-	// formatTx := func(tx *types.Transaction) (interface{}, error) {
-	// 	return tx.Hash(), nil
-	// }
-	// if fullTx {
-	// 	formatTx = func(tx *types.Transaction) (interface{}, error) {
-	// 		return newRPCTransactionFromBlockHash(block, tx.Hash()), nil
-	// 	}
-	// }
-	// txs := block.Transactions()
-	// transactions := make([]interface{}, len(txs))
-	// for i, tx := range block.Transactions() {
-	// 	if transactions[i], err = formatTx(tx); err != nil {
-	// 		return nil, err
-	// 	}
-	// }
-	// fields["transactions"] = transactions
+	fields["transactions"] = result
 
 	if blockNr == rpc.PendingBlockNumber {
 		// Pending blocks need to nil out a few fields
@@ -1082,38 +1066,33 @@ func (s *PublicTransactionPoolAPI) GetRawTransactionByHash(ctx context.Context, 
 	return rlp.EncodeToBytes(tx)
 }
 
-type ZipperLogs struct {
-	Addr   common.Address `json:"address,omitempty"`
-	Topics []common.Hash  `json:"topics,omitempty"`
-	Data   string         `json:"data,omitempty"`
-}
+// // GetTransactionReceipt returns the transaction receipt for the given transaction hash.
+// func (s *PublicTransactionPoolAPI) GetTransactionTopics(ctx context.Context, hash common.Hash) ([]*ZipperLogs, error) {
+// 	tx, blockHash, _, index := core.GetTransaction(s.b.ChainDb(), hash)
+// 	if tx == nil {
+// 		return nil, nil
+// 	}
+// 	receipts, err := s.b.GetReceipts(ctx, blockHash)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	if len(receipts) <= int(index) {
+// 		return nil, nil
+// 	}
+// 	receipt := receipts[index]
 
-// GetTransactionReceipt returns the transaction receipt for the given transaction hash.
-func (s *PublicTransactionPoolAPI) GetTransactionTopics(ctx context.Context, hash common.Hash) ([]*ZipperLogs, error) {
-	tx, blockHash, _, index := core.GetTransaction(s.b.ChainDb(), hash)
-	if tx == nil {
-		return nil, nil
-	}
-	receipts, err := s.b.GetReceipts(ctx, blockHash)
-	if err != nil {
-		return nil, err
-	}
-	if len(receipts) <= int(index) {
-		return nil, nil
-	}
-	receipt := receipts[index]
+// 	result := make([]*ZipperLogs, len(receipt.Logs))
 
-	result := make([]*ZipperLogs, len(receipt.Logs))
-
-	for k, v := range receipt.Logs {
-		result[k] = &ZipperLogs{
-			Addr:   v.Address,
-			Topics: v.Topics,
-			Data:   common.Bytes2Hex(v.Data),
-		}
-	}
-	return result, nil
-}
+// 	for k, v := range receipt.Logs {
+// 		result[k] = &ZipperLogs{
+// 			Addr:   v.Address,
+// 			Topics: v.Topics,
+// 			Data:   common.Bytes2Hex(v.Data),
+// 			receipt.GasUsed
+// 		}
+// 	}
+// 	return result, nil
+// }
 
 // GetTransactionReceipt returns the transaction receipt for the given transaction hash.
 func (s *PublicTransactionPoolAPI) GetTransactionReceipt(ctx context.Context, hash common.Hash) (map[string]interface{}, error) {

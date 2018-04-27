@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math/big"
 	"runtime"
 	"sync"
 	"time"
@@ -61,10 +62,15 @@ type TraceConfig struct {
 
 // txTraceResult is the result of a single transaction trace.
 type txTraceResult struct {
-	Result interface{} `json:"result,omitempty"` // Trace results produced by the tracer
-	Error  string      `json:"error,omitempty"`  // Trace failure produced by the tracer
-	TxHash common.Hash `json:"txHash,omitempty"`
-	Logs   interface{} `json:"logs,omitempty"`
+	Time
+	Nonce    uint64      `json:"nonce,omitempty"`
+	Gas      uint64      `json:"gas,omitempty"`
+	GasUsed  uint64      `json:"gasUsed,omitempty"`
+	GasPrice *big.Int    `json:"gasPrice,omitempty"`
+	Result   interface{} `json:"result,omitempty"` // Trace results produced by the tracer
+	Error    string      `json:"error,omitempty"`  // Trace failure produced by the tracer
+	TxHash   common.Hash `json:"txHash,omitempty"`
+	Logs     interface{} `json:"logs,omitempty"`
 }
 
 // blockTraceTask represents a single block trace task when an entire chain is
@@ -333,16 +339,17 @@ func (api *PrivateDebugAPI) traceChain(ctx context.Context, start, end *types.Bl
 	return sub, nil
 }
 
-func (api *PrivateDebugAPI) TraceBlockForZipperone(ctx context.Context, block *types.Block) (interface{}, error) {
+func (api *PrivateDebugAPI) TraceBlockForZipperone(ctx context.Context, block *types.Block, topics [][]common.Hash) (interface{}, error) {
 	trace := "callTracer"
-	return api.traceBlockForZipperone(ctx, block, &TraceConfig{Tracer: &trace})
+	return api.traceBlockForZipperone(ctx, block, &TraceConfig{Tracer: &trace}, topics)
 }
 
-func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *types.Block, config *TraceConfig) ([]*txTraceResult, error) {
+func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *types.Block, config *TraceConfig, topics [][]common.Hash) ([]*txTraceResult, error) {
 	// Create the parent state database
 	// if err := api.eth.engine.VerifyHeader(api.eth.blockchain, block.Header(), true); err != nil {
 	// 	return nil, err
 	// }
+
 	parent := api.eth.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1)
 	if parent == nil {
 		return nil, fmt.Errorf("parent %x not found", block.ParentHash())
@@ -365,6 +372,17 @@ func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *t
 		pend = new(sync.WaitGroup)
 		jobs = make(chan *txTraceTask, len(txs))
 	)
+
+	gasUseds, err := api.pfAPI.GetUsedForZipper(ctx, block.Hash())
+	if err != nil {
+		return nil, err
+	}
+
+	zipLogs, err := api.pfAPI.GetTopicsforZipperone(ctx, block.Number().Int64(), topics)
+	if err != nil {
+		return nil, err
+	}
+
 	threads := runtime.NumCPU()
 	if threads > len(txs) {
 		threads = len(txs)
@@ -376,24 +394,29 @@ func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *t
 
 			// Fetch and execute the next transaction trace tasks
 			for task := range jobs {
-				msg, _ := txs[task.index].AsMessage(signer)
+				tx := txs[task.index]
+				msg, _ := tx.AsMessage(signer)
+				txhash := tx.Hash()
+
 				vmctx := core.NewEVMContext(msg, block.Header(), api.eth.blockchain, nil)
 				res, err := api.traceTx(ctx, msg, vmctx, task.statedb, config)
 				if err != nil {
 					results[task.index] = &txTraceResult{Error: err.Error()}
 					continue
 				}
-				zipLogs, err := api.txpAPI.GetTransactionTopics(ctx, txs[task.index].Hash())
-				if err != nil {
-					results[task.index] = &txTraceResult{Error: err.Error()}
-					continue
+
+				results[task.index] = &txTraceResult{
+					Result:   res,
+					TxHash:   txhash,
+					GasPrice: tx.GasPrice(),
+					Nonce:    tx.Nonce(),
+					Gas:      tx.Gas(),
+					GasUsed:  gasUseds[txhash],
+				}
+				if log, ok := zipLogs[txhash]; ok {
+					results[task.index].Logs = log
 				}
 
-				if len(zipLogs) == 0 {
-					results[task.index] = &txTraceResult{Result: res, TxHash: txs[task.index].Hash()}
-				} else {
-					results[task.index] = &txTraceResult{Result: res, TxHash: txs[task.index].Hash(), Logs: zipLogs}
-				}
 			}
 		}()
 	}

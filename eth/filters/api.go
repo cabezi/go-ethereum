@@ -343,6 +343,43 @@ func (api *PublicFilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([
 	return returnLogs(logs), err
 }
 
+type ZipperLogs struct {
+	Addr   common.Address `json:"address,omitempty"`
+	Topics []common.Hash  `json:"topics,omitempty"`
+	Data   string         `json:"data,omitempty"`
+}
+
+func (api *PublicFilterAPI) GetTopicsforZipperone(ctx context.Context, blockNumber int64, topics [][]common.Hash) (map[common.Hash][]*ZipperLogs, error) {
+	// Create and run the filter to get all the logs
+	filter := New(api.backend, blockNumber, blockNumber, nil, topics)
+	logs, err := filter.Logs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[common.Hash][]*ZipperLogs)
+	for _, log := range logs {
+		result[log.TxHash] = append(result[log.TxHash], &ZipperLogs{
+			Addr:   log.Address,
+			Topics: log.Topics,
+			Data:   common.Bytes2Hex(log.Data),
+		})
+	}
+	return result, err
+}
+
+func (api *PublicFilterAPI) GetUsedForZipper(ctx context.Context, blockHash common.Hash) (map[common.Hash]uint64, error) {
+	receipts, err := api.backend.GetReceipts(ctx, blockHash)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[common.Hash]uint64)
+
+	for _, receipt := range receipts {
+		result[receipt.TxHash] = receipt.GasUsed
+	}
+	return result, nil
+}
+
 // UninstallFilter removes the filter with the given filter id.
 //
 // https://github.com/ethereum/wiki/wiki/JSON-RPC#eth_uninstallfilter
@@ -388,6 +425,7 @@ func (api *PublicFilterAPI) GetFilterLogs(ctx context.Context, id rpc.ID) ([]*ty
 	if err != nil {
 		return nil, err
 	}
+
 	return returnLogs(logs), nil
 }
 
