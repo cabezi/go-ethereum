@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"math/big"
 	"runtime"
 	"sync"
 	"time"
@@ -44,7 +43,7 @@ import (
 const (
 	// defaultTraceTimeout is the amount of time a single transaction can execute
 	// by default before being forcefully aborted.
-	defaultTraceTimeout = 5 * time.Second
+	defaultTraceTimeout = 600 * time.Second
 
 	// defaultTraceReexec is the number of blocks the tracer is willing to go back
 	// and reexecute to produce missing historical state necessary to run a specific
@@ -62,15 +61,14 @@ type TraceConfig struct {
 
 // txTraceResult is the result of a single transaction trace.
 type txTraceResult struct {
-	Time
-	Nonce    uint64      `json:"nonce,omitempty"`
-	Gas      uint64      `json:"gas,omitempty"`
-	GasUsed  uint64      `json:"gasUsed,omitempty"`
-	GasPrice *big.Int    `json:"gasPrice,omitempty"`
-	Result   interface{} `json:"result,omitempty"` // Trace results produced by the tracer
-	Error    string      `json:"error,omitempty"`  // Trace failure produced by the tracer
-	TxHash   common.Hash `json:"txHash,omitempty"`
-	Logs     interface{} `json:"logs,omitempty"`
+	Nonce    hexutil.Uint64 `json:"nonce"`
+	Gas      hexutil.Uint64 `json:"gas,omitempty"`
+	GasUsed  hexutil.Uint64 `json:"gasUsed,omitempty"`
+	GasPrice *hexutil.Big   `json:"gasPrice,omitempty"`
+	Result   interface{}    `json:"result,omitempty"` // Trace results produced by the tracer
+	Error    string         `json:"error,omitempty"`  // Trace failure produced by the tracer
+	TxHash   common.Hash    `json:"txHash,omitempty"`
+	Logs     interface{}    `json:"logs,omitempty"`
 }
 
 // blockTraceTask represents a single block trace task when an entire chain is
@@ -408,10 +406,10 @@ func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *t
 				results[task.index] = &txTraceResult{
 					Result:   res,
 					TxHash:   txhash,
-					GasPrice: tx.GasPrice(),
-					Nonce:    tx.Nonce(),
-					Gas:      tx.Gas(),
-					GasUsed:  gasUseds[txhash],
+					GasPrice: (*hexutil.Big)(tx.GasPrice()),
+					Nonce:    hexutil.Uint64(tx.Nonce()),
+					Gas:      hexutil.Uint64(tx.Gas()),
+					GasUsed:  hexutil.Uint64(gasUseds[txhash]),
 				}
 				if log, ok := zipLogs[txhash]; ok {
 					results[task.index].Logs = log
@@ -679,11 +677,7 @@ func (api *PrivateDebugAPI) traceTx(ctx context.Context, message core.Message, v
 	case config != nil && config.Tracer != nil:
 		// Define a meaningful timeout of a single transaction trace
 		timeout := defaultTraceTimeout
-		if config.Timeout != nil {
-			if timeout, err = time.ParseDuration(*config.Timeout); err != nil {
-				return nil, err
-			}
-		}
+
 		// Constuct the JavaScript tracer to execute with
 		if tracer, err = tracers.New(*config.Tracer); err != nil {
 			return nil, err
@@ -692,7 +686,7 @@ func (api *PrivateDebugAPI) traceTx(ctx context.Context, message core.Message, v
 		deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
 		go func() {
 			<-deadlineCtx.Done()
-			tracer.(*tracers.Tracer).Stop(errors.New("execution timeout"))
+			tracer.(*tracers.Tracer).Stop(fmt.Errorf("execution timeout %v hash %s", defaultTraceTimeout, message.From().Hex()))
 		}()
 		defer cancel()
 
