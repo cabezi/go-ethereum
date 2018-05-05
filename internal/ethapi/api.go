@@ -475,7 +475,7 @@ func (s *PrivateAccountAPI) SignAndSendTransaction(ctx context.Context, args Sen
 }
 
 type TraceAPI interface {
-	TraceBlockForZipperone(ctx context.Context, block *types.Block, topics [][]common.Hash) (interface{}, error)
+	TraceBlockForZipperone(ctx context.Context, block *types.Block, topics [][]common.Hash, tracerTx bool) (interface{}, error)
 }
 
 // PublicBlockChainAPI provides an API to access the Ethereum blockchain.
@@ -525,7 +525,7 @@ func (s *PublicBlockChainAPI) GetBlockByNumber(ctx context.Context, blockNr rpc.
 	return nil, err
 }
 
-func (s *PublicBlockChainAPI) GetBlockByNumberForZipperone(ctx context.Context, blockNr rpc.BlockNumber, topics [][]common.Hash) (map[string]interface{}, error) {
+func (s *PublicBlockChainAPI) GetBlockByNumberForZipperone(ctx context.Context, blockNr rpc.BlockNumber, topics [][]common.Hash, tracerTx bool) (map[string]interface{}, error) {
 	block, err := s.b.BlockByNumber(ctx, blockNr)
 	if err != nil {
 		return nil, err
@@ -539,7 +539,7 @@ func (s *PublicBlockChainAPI) GetBlockByNumberForZipperone(ctx context.Context, 
 		"miner":      block.Header().Coinbase,
 	}
 
-	result, err := s.t.TraceBlockForZipperone(ctx, block, topics)
+	result, err := s.t.TraceBlockForZipperone(ctx, block, topics, tracerTx)
 	if err != nil {
 		return nil, err
 	}

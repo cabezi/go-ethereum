@@ -337,16 +337,57 @@ func (api *PrivateDebugAPI) traceChain(ctx context.Context, start, end *types.Bl
 	return sub, nil
 }
 
-func (api *PrivateDebugAPI) TraceBlockForZipperone(ctx context.Context, block *types.Block, topics [][]common.Hash) (interface{}, error) {
+func (api *PrivateDebugAPI) TraceBlockForZipperone(ctx context.Context, block *types.Block, topics [][]common.Hash, tracerTx bool) (interface{}, error) {
 	trace := "callTracer"
-	return api.traceBlockForZipperone(ctx, block, &TraceConfig{Tracer: &trace}, topics)
+	return api.traceBlockForZipperone(ctx, block, &TraceConfig{Tracer: &trace}, topics, tracerTx)
 }
 
-func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *types.Block, config *TraceConfig, topics [][]common.Hash) ([]*txTraceResult, error) {
+func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *types.Block, config *TraceConfig, topics [][]common.Hash, tracerTx bool) ([]*txTraceResult, error) {
 	// Create the parent state database
 	// if err := api.eth.engine.VerifyHeader(api.eth.blockchain, block.Header(), true); err != nil {
 	// 	return nil, err
 	// }
+	var (
+		signer  = types.MakeSigner(api.config, block.Number())
+		txs     = block.Transactions()
+		results = make([]*txTraceResult, len(txs))
+	)
+
+	gasUseds, err := api.pfAPI.GetUsedForZipper(ctx, block.Hash())
+	if err != nil {
+		return nil, err
+	}
+
+	zipLogs, err := api.pfAPI.GetTopicsforZipperone(ctx, block.Number().Int64(), topics)
+	if err != nil {
+		return nil, err
+	}
+
+	if !tracerTx {
+		for k, tx := range txs {
+			res := make(map[string]interface{})
+			var signer types.Signer = types.FrontierSigner{}
+			if tx.Protected() {
+				signer = types.NewEIP155Signer(tx.ChainId())
+			}
+			from, _ := types.Sender(signer, tx)
+			res["from"] = from
+			res["value"] = (*hexutil.Big)(tx.Value())
+			res["to"] = *tx.To()
+			results[k] = &txTraceResult{
+				Result:   res,
+				TxHash:   tx.Hash(),
+				GasPrice: (*hexutil.Big)(tx.GasPrice()),
+				Nonce:    hexutil.Uint64(tx.Nonce()),
+				Gas:      hexutil.Uint64(tx.Gas()),
+				GasUsed:  hexutil.Uint64(gasUseds[tx.Hash()]),
+			}
+			if log, ok := zipLogs[tx.Hash()]; ok {
+				results[k].Logs = log
+			}
+		}
+		return results, nil
+	}
 
 	parent := api.eth.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1)
 	if parent == nil {
@@ -362,24 +403,9 @@ func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *t
 	}
 	// Execute all the transaction contained within the block concurrently
 	var (
-		signer = types.MakeSigner(api.config, block.Number())
-
-		txs     = block.Transactions()
-		results = make([]*txTraceResult, len(txs))
-
 		pend = new(sync.WaitGroup)
 		jobs = make(chan *txTraceTask, len(txs))
 	)
-
-	gasUseds, err := api.pfAPI.GetUsedForZipper(ctx, block.Hash())
-	if err != nil {
-		return nil, err
-	}
-
-	zipLogs, err := api.pfAPI.GetTopicsforZipperone(ctx, block.Number().Int64(), topics)
-	if err != nil {
-		return nil, err
-	}
 
 	threads := runtime.NumCPU()
 	if threads > len(txs) {
