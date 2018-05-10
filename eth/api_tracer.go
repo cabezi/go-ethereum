@@ -353,7 +353,7 @@ func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *t
 		results = make([]*txTraceResult, len(txs))
 	)
 
-	gasUseds, err := api.pfAPI.GetUsedForZipper(ctx, block.Hash())
+	gasUseds, contractAddrs, err := api.pfAPI.GetUsedForZipper(ctx, block.Hash())
 	if err != nil {
 		return nil, err
 	}
@@ -373,7 +373,11 @@ func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *t
 			from, _ := types.Sender(signer, tx)
 			res["from"] = from
 			res["value"] = (*hexutil.Big)(tx.Value())
-			res["to"] = *tx.To()
+			if tx.To() != nil && contractAddrs[tx.Hash()] == (common.Address{}) {
+				res["to"] = *tx.To()
+			} else {
+				res["contractAddress"] = contractAddrs[tx.Hash()]
+			}
 			results[k] = &txTraceResult{
 				Result:   res,
 				TxHash:   tx.Hash(),

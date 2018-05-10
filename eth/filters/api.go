@@ -367,17 +367,20 @@ func (api *PublicFilterAPI) GetTopicsforZipperone(ctx context.Context, blockNumb
 	return result, err
 }
 
-func (api *PublicFilterAPI) GetUsedForZipper(ctx context.Context, blockHash common.Hash) (map[common.Hash]uint64, error) {
+func (api *PublicFilterAPI) GetUsedForZipper(ctx context.Context, blockHash common.Hash) (map[common.Hash]uint64, map[common.Hash]common.Address, error) {
 	receipts, err := api.backend.GetReceipts(ctx, blockHash)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	result := make(map[common.Hash]uint64)
-
+	gasUseds := make(map[common.Hash]uint64)
+	contractAddrs := make(map[common.Hash]common.Address)
 	for _, receipt := range receipts {
-		result[receipt.TxHash] = receipt.GasUsed
+		gasUseds[receipt.TxHash] = receipt.GasUsed
+		if receipt.ContractAddress != (common.Address{}) {
+			contractAddrs[receipt.TxHash] = receipt.ContractAddress
+		}
 	}
-	return result, nil
+	return gasUseds, contractAddrs, nil
 }
 
 // UninstallFilter removes the filter with the given filter id.
