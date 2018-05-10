@@ -376,7 +376,7 @@ func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *t
 			if tx.To() != nil && contractAddrs[tx.Hash()] == (common.Address{}) {
 				res["to"] = *tx.To()
 			} else {
-				res["contractAddress"] = contractAddrs[tx.Hash()]
+				res["to"] = contractAddrs[tx.Hash()]
 			}
 			results[k] = &txTraceResult{
 				Result:   res,
