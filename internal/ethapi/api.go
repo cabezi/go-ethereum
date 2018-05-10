@@ -531,6 +531,10 @@ func (s *PublicBlockChainAPI) GetBlockByNumberForZipperone(ctx context.Context, 
 		return nil, err
 	}
 
+	if block == nil {
+		return nil, nil
+	}
+
 	fields := map[string]interface{}{
 		"number":     (*hexutil.Big)(block.Header().Number),
 		"hash":       block.Hash(),
