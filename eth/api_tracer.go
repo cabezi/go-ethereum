@@ -347,11 +347,15 @@ func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *t
 	// if err := api.eth.engine.VerifyHeader(api.eth.blockchain, block.Header(), true); err != nil {
 	// 	return nil, err
 	// }
+
 	var (
 		signer  = types.MakeSigner(api.config, block.Number())
 		txs     = block.Transactions()
 		results = make([]*txTraceResult, len(txs))
 	)
+	if block.NumberU64() == 0 {
+		return results, nil
+	}
 
 	gasUseds, contractAddrs, err := api.pfAPI.GetUsedForZipper(ctx, block.Hash())
 	if err != nil {
