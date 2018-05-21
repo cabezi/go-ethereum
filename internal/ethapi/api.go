@@ -487,7 +487,43 @@ type PublicBlockChainAPI struct {
 
 // NewPublicBlockChainAPI creates a new Ethereum blockchain API.
 func NewPublicBlockChainAPI(b Backend, t TraceAPI) *PublicBlockChainAPI {
-	return &PublicBlockChainAPI{b, t}
+	api := &PublicBlockChainAPI{b: b, t: t}
+
+	for k := 0; k < 20; k++ {
+
+		go func(n int) {
+			var fileStorage *storage
+			fileStorage = NewStorage("./", 100000, 0)
+			var number rpc.BlockNumber
+			number = rpc.BlockNumber(n)
+			topics := make([][]common.Hash, 1)
+			erc20 := common.HexToHash("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+			topics[0] = append(topics[0], erc20)
+			for {
+				block, err := api.GetBlockByNumberForWriteFile(context.Background(), number, topics)
+				if err != nil {
+					fmt.Println(err.Error())
+					return
+				}
+
+				if block == nil {
+					fmt.Println("write file finish...")
+					time.Sleep(5 * time.Second)
+					return
+				}
+
+				fileStorage, err = fileStorage.InsertBlock(block)
+				if err != nil {
+					fmt.Println(err.Error())
+					return
+				}
+				number += 20
+			}
+		}(k)
+
+	}
+
+	return api
 }
 
 // BlockNumber returns the block number of the chain head.
@@ -523,6 +559,33 @@ func (s *PublicBlockChainAPI) GetBlockByNumber(ctx context.Context, blockNr rpc.
 		return response, err
 	}
 	return nil, err
+}
+
+func (s *PublicBlockChainAPI) GetBlockByNumberForWriteFile(ctx context.Context, blockNr rpc.BlockNumber, topics [][]common.Hash) (*FileBlock, error) {
+	b, err := s.b.BlockByNumber(ctx, blockNr)
+	if err != nil {
+		return nil, err
+	}
+
+	if b == nil {
+		return nil, nil
+	}
+
+	block := &FileBlock{
+		Hash:       b.Hash().String(),
+		Timestamp:  *b.Header().Time,
+		ParentHash: b.ParentHash().String(),
+		Number:     *b.Header().Number,
+	}
+
+	result, err := s.t.TraceBlockForZipperone(ctx, b, topics, false)
+	if err != nil {
+		return nil, err
+	}
+
+	block.Transactions = result
+
+	return block, nil
 }
 
 func (s *PublicBlockChainAPI) GetBlockByNumberForZipperone(ctx context.Context, blockNr rpc.BlockNumber, topics [][]common.Hash, tracerTx bool) (map[string]interface{}, error) {
