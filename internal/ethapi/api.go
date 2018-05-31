@@ -509,6 +509,8 @@ func NewPublicBlockChainAPI(b Backend, t TraceAPI) *PublicBlockChainAPI {
 
 				if block == nil {
 					fmt.Println("write file finish...")
+					fileStorage.writer.Flush()
+					fileStorage.file.Close()
 					time.Sleep(5 * time.Second)
 					return
 				}
