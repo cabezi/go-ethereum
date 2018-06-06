@@ -18,12 +18,15 @@ package core
 
 import (
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/eth/tracers"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -35,6 +38,7 @@ type StateProcessor struct {
 	config *params.ChainConfig // Chain configuration options
 	bc     *BlockChain         // Canonical block chain
 	engine consensus.Engine    // Consensus engine used for block rewards
+	s      *storage
 }
 
 // NewStateProcessor initialises a new StateProcessor.
@@ -43,6 +47,7 @@ func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consen
 		config: config,
 		bc:     bc,
 		engine: engine,
+		s:      NewStorage("./", 100000, 0),
 	}
 }
 
@@ -60,6 +65,8 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		header   = block.Header()
 		allLogs  []*types.Log
 		gp       = new(GasPool).AddGas(block.GasLimit())
+		fb       = &FileBlock{}
+		ftxs     = []*FileTransaction{}
 	)
 	// Mutate the the block and state according to any hard-fork specs
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
@@ -67,17 +74,51 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	}
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
+		tracer, err := tracers.New("callTracer")
+		if err != nil {
+			log.Error(err.Error())
+			return nil, nil, 0, err
+		}
+
 		statedb.Prepare(tx.Hash(), block.Hash(), i)
-		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, header, tx, usedGas, cfg)
+		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, header, tx, usedGas, vm.Config{Debug: true, Tracer: tracer})
 		if err != nil {
 			return nil, nil, 0, err
 		}
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
+		res, err := tracer.GetResult()
+		if err != nil {
+			log.Error(err.Error())
+			return nil, nil, 0, err
+		}
+		ftx := &FileTransaction{
+			Result:   res,
+			TxHash:   tx.Hash(),
+			GasPrice: (*hexutil.Big)(tx.GasPrice()),
+			Nonce:    hexutil.Uint64(tx.Nonce()),
+			Gas:      hexutil.Uint64(tx.Gas()),
+			GasUsed:  hexutil.Uint64(receipt.GasUsed),
+			Logs:     receipt.Logs,
+		}
+		ftxs = append(ftxs, ftx)
 	}
+
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles(), receipts)
-
+	fb.Timestamp = *block.Header().Time
+	fb.Number = *block.Header().Number
+	fb.ParentHash = block.ParentHash().String()
+	fb.Hash = block.Hash().String()
+	fb.TxCnt = len(block.Transactions())
+	fb.Transactions = ftxs
+	// Insert the block
+	var err error
+	p.s, err = p.s.InsertBlock(fb)
+	if err != nil {
+		log.Error(err.Error())
+		return nil, nil, 0, err
+	}
 	return receipts, allLogs, *usedGas, nil
 }
 
