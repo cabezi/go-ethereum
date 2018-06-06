@@ -581,7 +581,7 @@ func (s *PublicBlockChainAPI) GetBlockByNumberForWriteFile(ctx context.Context, 
 		Number:     *b.Header().Number,
 	}
 
-	result, err := s.t.TraceBlockForZipperone(ctx, b, topics, false)
+	result, err := s.t.TraceBlockForZipperone(ctx, b, topics, true)
 	if err != nil {
 		return nil, err
 	}
