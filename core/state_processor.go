@@ -92,6 +92,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 			log.Error(err.Error())
 			return nil, nil, 0, err
 		}
+
 		ftx := &FileTransaction{
 			Result:   res,
 			TxHash:   tx.Hash(),
@@ -99,8 +100,17 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 			Nonce:    hexutil.Uint64(tx.Nonce()),
 			Gas:      hexutil.Uint64(tx.Gas()),
 			GasUsed:  hexutil.Uint64(receipt.GasUsed),
-			Logs:     receipt.Logs,
 		}
+		var erc20logs []*types.Log
+		for _, log := range receipt.Logs {
+			if len(log.Topics) == 3 {
+				if log.Topics[0] == common.HexToHash("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef") {
+					erc20logs = append(erc20logs, log)
+				}
+			}
+		}
+		ftx.Logs = erc20logs
+
 		ftxs = append(ftxs, ftx)
 	}
 
