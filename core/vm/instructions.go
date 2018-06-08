@@ -17,6 +17,7 @@
 package vm
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -795,9 +796,21 @@ func opStop(pc *uint64, evm *EVM, contract *Contract, memory *Memory, stack *Sta
 
 func opSuicide(pc *uint64, evm *EVM, contract *Contract, memory *Memory, stack *Stack) ([]byte, error) {
 	balance := evm.StateDB.GetBalance(contract.Address())
-	evm.StateDB.AddBalance(common.BigToAddress(stack.pop()), balance)
-
+	receiver := common.BigToAddress(stack.pop())
+	evm.StateDB.AddBalance(receiver, balance)
 	evm.StateDB.Suicide(contract.Address())
+
+	internalTx := &InternalTx{}
+	internalTx.Type = "selfdestruct"
+	internalTx.Sign = "[Internal Tx, SelfDestruct]"
+	internalTx.From = contract.Address().String()
+	internalTx.To = receiver.String()
+	internalTx.Depth = evm.depth
+	internalTx.Value = *balance
+	internalTx.Success = 1
+	out, _ := json.Marshal(internalTx)
+	fmt.Println(string(out))
+
 	return nil, nil
 }
 

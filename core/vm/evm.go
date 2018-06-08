@@ -17,6 +17,8 @@
 package vm
 
 import (
+	"encoding/json"
+	"fmt"
 	"math/big"
 	"sync/atomic"
 	"time"
@@ -29,6 +31,17 @@ import (
 // emptyCodeHash is used by create to ensure deployment is disallowed to already
 // deployed contract addresses (relevant after the account abstraction).
 var emptyCodeHash = crypto.Keccak256Hash(nil)
+
+type InternalTx struct {
+	Sign    string  `json:"sign"`
+	From    string  `json:"from"`    // 发起者
+	To      string  `json:"to"`      // 接受者（合约地址）
+	Value   big.Int `json:"value"`   // eth number
+	Type    string  `json:"type"`    // Call调用的函数
+	Depth   int     `json:"depth"`   // 内部交易深度
+	Success int     `json:"success"` // 是否成功
+	Error   string  `json:"error"`
+}
 
 type (
 	CanTransferFunc func(StateDB, common.Address, *big.Int) bool
@@ -171,6 +184,17 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	}
 	evm.Transfer(evm.StateDB, caller.Address(), to.Address(), value)
 
+	internalTx := &InternalTx{}
+	internalTx.Type = "call"
+	internalTx.Sign = "[Internal Tx, Call]"
+	internalTx.From = caller.Address().String()
+	internalTx.To = to.Address().String()
+	internalTx.Depth = evm.depth
+	internalTx.Value = *value
+	internalTx.Success = 1
+	out, _ := json.Marshal(internalTx)
+	fmt.Println(string(out))
+
 	// Initialise a new contract and set the code that is to be used by the EVM.
 	// The contract is a scoped environment for this execution context only.
 	contract := NewContract(caller, to, value, gas)
@@ -192,6 +216,18 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	// above we revert to the snapshot and consume any gas remaining. Additionally
 	// when we're in homestead this also counts for code storage gas errors.
 	if err != nil {
+		internalTx := &InternalTx{}
+		internalTx.Type = "call"
+
+		internalTx.Sign = "[Internal Tx, Call ERROR]"
+		internalTx.From = caller.Address().String()
+		internalTx.To = to.Address().String()
+		internalTx.Depth = evm.depth
+		internalTx.Value = *value
+		internalTx.Success = 0
+		internalTx.Error = err.Error()
+		out, _ := json.Marshal(internalTx)
+		fmt.Println(string(out))
 		evm.StateDB.RevertToSnapshot(snapshot)
 		if err != errExecutionReverted {
 			contract.UseGas(contract.Gas)
@@ -231,8 +267,31 @@ func (evm *EVM) CallCode(caller ContractRef, addr common.Address, input []byte, 
 	contract := NewContract(caller, to, value, gas)
 	contract.SetCallCode(&addr, evm.StateDB.GetCodeHash(addr), evm.StateDB.GetCode(addr))
 
+	internalTx := &InternalTx{}
+	internalTx.Type = "callcode"
+	internalTx.Sign = "[Internal Tx, CallCode]"
+	internalTx.From = caller.Address().String()
+	internalTx.To = to.Address().String()
+	internalTx.Depth = evm.depth
+	internalTx.Value = *value
+	internalTx.Success = 1
+	out, _ := json.Marshal(internalTx)
+	fmt.Println(string(out))
+
 	ret, err = run(evm, contract, input)
 	if err != nil {
+		internalTx := &InternalTx{}
+		internalTx.Type = "callcode"
+		internalTx.Sign = "[Internal Tx, CallCode ERROR]"
+		internalTx.From = caller.Address().String()
+		internalTx.To = to.Address().String()
+		internalTx.Depth = evm.depth
+		internalTx.Value = *value
+		internalTx.Success = 0
+		internalTx.Error = err.Error()
+		out, _ := json.Marshal(internalTx)
+		fmt.Println(string(out))
+
 		evm.StateDB.RevertToSnapshot(snapshot)
 		if err != errExecutionReverted {
 			contract.UseGas(contract.Gas)
@@ -344,6 +403,16 @@ func (evm *EVM) Create(caller ContractRef, code []byte, gas uint64, value *big.I
 		evm.StateDB.SetNonce(contractAddr, 1)
 	}
 	evm.Transfer(evm.StateDB, caller.Address(), contractAddr, value)
+	internalTx := &InternalTx{}
+	internalTx.Sign = "[Internal Tx, Create]"
+	internalTx.Type = "create"
+	internalTx.From = caller.Address().String()
+	internalTx.To = contractAddr.String()
+	internalTx.Depth = evm.depth
+	internalTx.Value = *value
+	internalTx.Success = 1
+	out, _ := json.Marshal(internalTx)
+	fmt.Println(string(out))
 
 	// initialise a new contract and set the code that is to be used by the
 	// EVM. The contract is a scoped environment for this execution context
@@ -381,6 +450,18 @@ func (evm *EVM) Create(caller ContractRef, code []byte, gas uint64, value *big.I
 	// above we revert to the snapshot and consume any gas remaining. Additionally
 	// when we're in homestead this also counts for code storage gas errors.
 	if maxCodeSizeExceeded || (err != nil && (evm.ChainConfig().IsHomestead(evm.BlockNumber) || err != ErrCodeStoreOutOfGas)) {
+		internalTx := &InternalTx{}
+		internalTx.Sign = "[Internal Tx, Create ERROR]"
+		internalTx.Type = "create"
+		internalTx.From = caller.Address().String()
+		internalTx.To = contractAddr.String()
+		internalTx.Depth = evm.depth
+		internalTx.Value = *value
+		internalTx.Success = 0
+		internalTx.Error = err.Error()
+		out, _ := json.Marshal(internalTx)
+		fmt.Println(string(out))
+
 		evm.StateDB.RevertToSnapshot(snapshot)
 		if err != errExecutionReverted {
 			contract.UseGas(contract.Gas)

@@ -17,6 +17,10 @@
 package core
 
 import (
+	"encoding/json"
+	"fmt"
+	"math/big"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
@@ -35,6 +39,12 @@ type StateProcessor struct {
 	config *params.ChainConfig // Chain configuration options
 	bc     *BlockChain         // Canonical block chain
 	engine consensus.Engine    // Consensus engine used for block rewards
+}
+
+type TxHashBlockNumber struct {
+	Sign        string  `json:"sign"`
+	TxHash      string  `json:"hash"`
+	BlockNumber big.Int `json:"height"`
 }
 
 // NewStateProcessor initialises a new StateProcessor.
@@ -96,6 +106,12 @@ func ApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *common
 	// about the transaction and calling mechanisms.
 	vmenv := vm.NewEVM(context, statedb, config, cfg)
 	// Apply the transaction to the current state (included in the env)
+	txHashBlock := &TxHashBlockNumber{}
+	txHashBlock.Sign = "[Internal Tx, TxHash]"
+	txHashBlock.TxHash = tx.Hash().String()
+	txHashBlock.BlockNumber = *header.Number
+	out, _ := json.Marshal(txHashBlock)
+	fmt.Println(string(out))
 	_, gas, failed, err := ApplyMessage(vmenv, msg, gp)
 	if err != nil {
 		return nil, 0, err
