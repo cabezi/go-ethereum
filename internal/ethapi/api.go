@@ -490,41 +490,41 @@ type PublicBlockChainAPI struct {
 func NewPublicBlockChainAPI(b Backend, t TraceAPI) *PublicBlockChainAPI {
 	api := &PublicBlockChainAPI{b: b, t: t}
 
-	for k := 0; k < 20; k++ {
+	// for k := 0; k < 20; k++ {
 
-		go func(n int) {
-			var fileStorage *storage
-			fileStorage = NewStorage("./", 100000, 0)
-			var number rpc.BlockNumber
-			number = rpc.BlockNumber(n)
-			topics := make([][]common.Hash, 1)
-			erc20 := common.HexToHash("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
-			topics[0] = append(topics[0], erc20)
-			for {
-				block, err := api.GetBlockByNumberForWriteFile(context.Background(), number, topics)
-				if err != nil {
-					fmt.Println(err.Error())
-					return
-				}
+	// 	go func(n int) {
+	// 		var fileStorage *storage
+	// 		fileStorage = NewStorage("./", 100000, 0)
+	// 		var number rpc.BlockNumber
+	// 		number = rpc.BlockNumber(n)
+	// 		topics := make([][]common.Hash, 1)
+	// 		erc20 := common.HexToHash("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+	// 		topics[0] = append(topics[0], erc20)
+	// 		for {
+	// 			block, err := api.GetBlockByNumberForWriteFile(context.Background(), number, topics)
+	// 			if err != nil {
+	// 				fmt.Println(err.Error())
+	// 				return
+	// 			}
 
-				if block == nil {
-					fmt.Println("write file finish...")
-					fileStorage.writer.Flush()
-					fileStorage.file.Close()
-					time.Sleep(5 * time.Second)
-					return
-				}
+	// 			if block == nil {
+	// 				fmt.Println("write file finish...")
+	// 				fileStorage.writer.Flush()
+	// 				fileStorage.file.Close()
+	// 				time.Sleep(5 * time.Second)
+	// 				return
+	// 			}
 
-				fileStorage, err = fileStorage.InsertBlock(block)
-				if err != nil {
-					fmt.Println(err.Error())
-					return
-				}
-				number += 20
-			}
-		}(k)
+	// 			fileStorage, err = fileStorage.InsertBlock(block)
+	// 			if err != nil {
+	// 				fmt.Println(err.Error())
+	// 				return
+	// 			}
+	// 			number += 20
+	// 		}
+	// 	}(k)
 
-	}
+	// }
 
 	return api
 }
@@ -607,7 +607,15 @@ func (s *PublicBlockChainAPI) GetBlockByNumberForZipperone(ctx context.Context, 
 		"parentHash": block.Header().ParentHash,
 		"timestamp":  (*hexutil.Big)(block.Header().Time),
 		"miner":      block.Header().Coinbase,
+		"gasUsed":    block.Header().GasUsed,
 	}
+
+	uncles := block.Uncles()
+	uncleHashes := make([]common.Hash, len(uncles))
+	for i, uncle := range uncles {
+		uncleHashes[i] = uncle.Hash()
+	}
+	fields["uncles"] = uncleHashes
 
 	result, err := s.t.TraceBlockForZipperone(ctx, block, topics, tracerTx)
 	if err != nil {
@@ -621,6 +629,7 @@ func (s *PublicBlockChainAPI) GetBlockByNumberForZipperone(ctx context.Context, 
 			fields[field] = nil
 		}
 	}
+
 	return fields, nil
 }
 

@@ -17,13 +17,18 @@
 package core
 
 import (
+	"encoding/json"
+	"fmt"
+
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -53,6 +58,17 @@ func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consen
 // Process returns the receipts and logs accumulated during the process and
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
+type txTraceResult struct {
+	Nonce    hexutil.Uint64 `json:"nonce"`
+	Gas      hexutil.Uint64 `json:"gas,omitempty"`
+	GasUsed  hexutil.Uint64 `json:"gasUsed,omitempty"`
+	GasPrice *hexutil.Big   `json:"gasPrice,omitempty"`
+	Result   interface{}    `json:"result,omitempty"` // Trace results produced by the tracer
+	Error    string         `json:"error,omitempty"`  // Trace failure produced by the tracer
+	TxHash   common.Hash    `json:"txHash,omitempty"`
+	Logs     interface{}    `json:"logs,omitempty"`
+}
+
 func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (types.Receipts, []*types.Log, uint64, error) {
 	var (
 		receipts types.Receipts
@@ -61,19 +77,43 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		allLogs  []*types.Log
 		gp       = new(GasPool).AddGas(block.GasLimit())
 	)
+	fields := map[string]interface{}{
+		"number":     (*hexutil.Big)(block.Header().Number),
+		"hash":       block.Hash(),
+		"parentHash": block.Header().ParentHash,
+		"timestamp":  (*hexutil.Big)(block.Header().Time),
+		"miner":      block.Header().Coinbase,
+	}
 	// Mutate the the block and state according to any hard-fork specs
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(statedb)
 	}
 	// Iterate over and process the individual transactions
+	results := make([]*txTraceResult, 0)
 	for i, tx := range block.Transactions() {
 		statedb.Prepare(tx.Hash(), block.Hash(), i)
-		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, header, tx, usedGas, cfg)
+		receipt, _, res, err := ApplyTransactionForZipper(p.config, p.bc, nil, gp, statedb, header, tx, usedGas, cfg)
 		if err != nil {
 			return nil, nil, 0, err
 		}
+		result := &txTraceResult{
+			Result:   res,
+			TxHash:   tx.Hash(),
+			GasPrice: (*hexutil.Big)(tx.GasPrice()),
+			Nonce:    hexutil.Uint64(tx.Nonce()),
+			Gas:      hexutil.Uint64(tx.Gas()),
+			GasUsed:  hexutil.Uint64(receipt.GasUsed),
+		}
+		results = append(results, result)
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
+	}
+	fields["transactions"] = results
+	out, err := json.Marshal(fields)
+	if err != nil {
+		fmt.Println("Process json fail", block.Header().Number)
+	} else {
+		fmt.Println(string(out))
 	}
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles(), receipts)
@@ -123,4 +163,54 @@ func ApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *common
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
 
 	return receipt, gas, err
+}
+
+func ApplyTransactionForZipper(config *params.ChainConfig, bc *BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, uint64, interface{}, error) {
+	msg, err := tx.AsMessage(types.MakeSigner(config, header.Number))
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	// Create a new context to be used in the EVM environment
+	context := NewEVMContext(msg, header, bc, author)
+	// Create a new environment which holds all relevant information
+	// about the transaction and calling mechanisms.
+	cfg.Debug = true
+	tracer, err := tracers.New("callTracer")
+	if err != nil {
+		fmt.Println("ApplyTransactionForZipper trace fail", tx.Hash())
+		return nil, 0, nil, err
+	}
+	cfg.Tracer = tracer
+	vmenv := vm.NewEVM(context, statedb, config, cfg)
+	// Apply the transaction to the current state (included in the env)
+	_, gas, failed, err := ApplyMessage(vmenv, msg, gp)
+	out, err := tracer.GetResult()
+	if err != nil {
+		fmt.Println("ApplyTransactionForZipper trace getResult fail", tx.Hash())
+
+		return nil, 0, nil, err
+	}
+	// Update the state with pending changes
+	var root []byte
+	if config.IsByzantium(header.Number) {
+		statedb.Finalise(true)
+	} else {
+		root = statedb.IntermediateRoot(config.IsEIP158(header.Number)).Bytes()
+	}
+	*usedGas += gas
+	//retult, err := tracer.GetResult()
+	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
+	// based on the eip phase, we're passing wether the root touch-delete accounts.
+	receipt := types.NewReceipt(root, failed, *usedGas)
+	receipt.TxHash = tx.Hash()
+	receipt.GasUsed = gas
+	// if the transaction created a contract, store the creation address in the receipt.
+	if msg.To() == nil {
+		receipt.ContractAddress = crypto.CreateAddress(vmenv.Context.Origin, tx.Nonce())
+	}
+	// Set the receipt logs and create a bloom for filtering
+	receipt.Logs = statedb.GetLogs(tx.Hash())
+	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
+
+	return receipt, gas, out, err
 }

@@ -481,6 +481,7 @@ func (api *PrivateDebugAPI) traceBlockForZipperone(ctx context.Context, block *t
 	if failed != nil {
 		return nil, failed
 	}
+	fmt.Println(results)
 	return results, nil
 }
 
@@ -753,7 +754,8 @@ func (api *PrivateDebugAPI) traceTx(ctx context.Context, message core.Message, v
 		}, nil
 
 	case *tracers.Tracer:
-		return tracer.GetResult()
+		out, err := tracer.GetResult()
+		return out, err
 
 	default:
 		panic(fmt.Sprintf("bad tracer type %T", tracer))
